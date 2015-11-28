@@ -1,3 +1,4 @@
+/*---The following program demonstrates a gnutella like SERVENT-----*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -84,7 +85,7 @@ int create_server(int sport)
 			exit(1);
 		}
 		if(pid==0)
-		{
+		{//client handler
 			close(serversock);
 			doprocessing(clientsock);
 			exit(0);
