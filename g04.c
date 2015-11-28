@@ -1,6 +1,8 @@
 /*---The following program demonstrates a gnutella like SERVENT-----*/
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <errno.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -9,7 +11,86 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #define MAX_CONNECTIONS 100
+#define MAX_FILE_LENGTH 20
+#define MAX_LINE_LENGTH 100
 
+struct g04_config
+{
+	int nPort;
+	int fPort;
+	int nop;
+	int ttl;
+	char seedTracker[MAX_FILE_LENGTH];
+	int isSeed; //0 or 1
+	char localFiles[MAX_FILE_LENGTH];
+	char lfilepath[MAX_FILE_LENGTH];
+};
+
+void parseConfig(struct g04_config* g)
+{
+	FILE * fp;
+	char *token,*value,line[MAX_LINE_LENGTH];
+	char split[2] = "=";
+	fp = fopen("g04.conf","r");
+	if(fp == NULL)
+	{
+		perror("Error parsing the config file, exiting now!");
+		exit(0);
+	}
+	else
+	{
+		while(fgets(line,MAX_LINE_LENGTH,fp)!=NULL)
+		{
+			token = NULL;
+			token = strtok(line,split);
+			if(token!=NULL)
+			{
+				value = strtok(NULL,split);
+			}
+			if(strcmp(token,"neighbourPort")==0)
+				g->nPort = atoi(value);
+			else if(strcmp(token,"filePort")==0)
+				g->fPort = atoi(value);
+			else if(strcmp(token,"NumberOfPeers")==0)
+				g->nop = atoi(value);
+			else if(strcmp(token,"TTL")==0)
+				g->ttl = atoi(value);
+			else if(strcmp(token,"seedNodes")==0)
+				strcpy(g->seedTracker,value);
+			else if(strcmp(token,"isSeedNode")==0)
+			{
+				if(strcmp(value,"yes")==0)
+					g->isSeed = 1;
+				else if(strcmp(value,"no")==0)
+					g->isSeed = 0;
+				else
+					g->isSeed = 0;
+			}
+			else if(strcmp(token,"localFiles")==0)
+				strcpy(g->localFiles,value);
+			else if(strcmp(token,"localFilesDirectory")==0)
+				strcpy(g->lfilepath,value);
+			else
+			{
+				printf("Unkown key %s\n", token);
+				exit(0);
+			}
+		}
+	}
+	fclose(fp);
+}
+
+void printconfig(struct g04_config* g)
+{
+	printf("%d\n",g->nPort);
+	printf("%d\n",g->fPort);
+	printf("%d\n",g->nop);
+	printf("%d\n",g->ttl);
+	printf("%s\n",g->seedTracker);
+	printf("%d\n",g->isSeed);
+	printf("%s\n",g->localFiles);
+	printf("%s\n",g->lfilepath);
+}
 
 void doprocessing (int sock) {
    int n;
@@ -100,8 +181,12 @@ int create_server(int sport)
 
 int main(void)
 {
+	struct g04_config* g04;
 	int pd1,pd2,status,n=2,pid;
-	pd1 = fork();
+	g04 = (struct g04_config*)malloc(sizeof(struct g04_config));
+	parseConfig(g04);
+	printconfig(g04);
+	/*pd1 = fork();
 	pd2 = fork();
 	if(pd1==0)
 	{
@@ -116,6 +201,6 @@ int main(void)
   		pid = wait(&status);
   		printf("Child with PID %ld exited with status 0x%x.\n", (long)pid, status);
  		 --n;  // TODO(pts): Remove pid from the pids array.
-				}
+				}*/
 	return 0;
 }
