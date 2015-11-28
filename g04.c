@@ -100,15 +100,22 @@ int create_server(int sport)
 
 int main(void)
 {
-	int pd,status;
-	pd = fork();
-	if(pd==0)
+	int pd1,pd2,status,n=2,pid;
+	pd1 = fork();
+	pd2 = fork();
+	if(pd1==0)
 	{
 		create_server(5007);	
 	}
-	else
+	if(pd2==0)
 	{
-		waitpid(pd,&status,0);
+		create_server(5008);
 	}
+
+	while (n > 0) {
+  		pid = wait(&status);
+  		printf("Child with PID %ld exited with status 0x%x.\n", (long)pid, status);
+ 		 --n;  // TODO(pts): Remove pid from the pids array.
+				}
 	return 0;
 }
