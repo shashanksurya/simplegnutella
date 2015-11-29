@@ -4,15 +4,18 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <ctype.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <resolv.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <sys/wait.h>
 #include <netinet/in.h>
 #define MAX_CONNECTIONS 100
 #define MAX_FILE_LENGTH 20
 #define MAX_LINE_LENGTH 100
+#define MAX_FILES 200
 
 struct g04_config
 {
@@ -25,6 +28,29 @@ struct g04_config
 	char localFiles[MAX_FILE_LENGTH];
 	char lfilepath[MAX_FILE_LENGTH];
 };
+
+struct nodeinf
+{
+	char IP[16];
+	int port;
+};
+
+struct fileDB
+{
+	char **keywords;
+	char *filename;
+};
+
+
+char *removespaces(char *c)
+{
+	int end = strlen(c);
+	if(isspace(c[end-1]))
+	{
+		c[end-1] = '\0';
+	}
+	return c;
+}
 
 void parseConfig(struct g04_config* g)
 {
@@ -56,7 +82,7 @@ void parseConfig(struct g04_config* g)
 			else if(strcmp(token,"TTL")==0)
 				g->ttl = atoi(value);
 			else if(strcmp(token,"seedNodes")==0)
-				strcpy(g->seedTracker,value);
+				strcpy(g->seedTracker,removespaces(value));
 			else if(strcmp(token,"isSeedNode")==0)
 			{
 				if(strcmp(value,"yes")==0)
@@ -67,7 +93,7 @@ void parseConfig(struct g04_config* g)
 					g->isSeed = 0;
 			}
 			else if(strcmp(token,"localFiles")==0)
-				strcpy(g->localFiles,value);
+				strcpy(g->localFiles,removespaces(value));
 			else if(strcmp(token,"localFilesDirectory")==0)
 				strcpy(g->lfilepath,value);
 			else
@@ -75,6 +101,92 @@ void parseConfig(struct g04_config* g)
 				printf("Unkown key %s\n", token);
 				exit(0);
 			}
+		}
+	}
+	fclose(fp);
+}
+
+void parseSeedFile(struct nodeinf* seedInf,char *filename)
+{
+	FILE * fp;
+	char *token,*value,line[MAX_LINE_LENGTH];
+	char split[2] = " ";
+	int i=0;
+	fp = fopen(filename,"r");
+	if(fp == NULL)
+	{
+		printf("%s\n",filename);
+		perror("Error parsing the seed file, exiting now!");
+		exit(0);
+	}
+	else
+	{
+		while(fgets(line,MAX_LINE_LENGTH,fp)!=NULL)
+		{
+			token = NULL;
+			token = strtok(line,split);
+			if(token!=NULL)
+			{
+				value = strtok(NULL,split);
+			}
+			strcpy(seedInf[i].IP,token);
+			seedInf[i].port = atoi(value);
+			i++;
+		}
+	}
+	//to mark the end of the file
+	strcpy(seedInf[i].IP,"0.0.0.0");
+	seedInf[i].port = -1;
+	fclose(fp);
+}
+
+void parsefileDB(struct fileDB* lFiles,char *filename)
+{
+	FILE * fp;
+	char *token,*value,line[MAX_LINE_LENGTH],*key;
+	char split[2] = ":";
+	int i=0,j,key_count;
+	fp = fopen(filename,"r");
+	if(fp == NULL)
+	{
+		printf("%s\n",filename);
+		perror("Error parsing the localFiles file, exiting now!");
+		exit(0);
+	}
+	else
+	{
+		while(fgets(line,MAX_LINE_LENGTH,fp)!=NULL)
+		{
+			token = NULL,key = NULL;
+			token = strtok(line,split);
+			if(token!=NULL)
+			{
+				value = strtok(NULL,split);
+			}
+			//printf("filename %s keywords %s\n",token,value);
+			//SAVING FILENAME
+			lFiles[i].filename = strdup(token);
+			key_count = 0;
+			for(j=0;value[j]!='\0';j++)
+			{
+				if(value[j]=='|')
+				{
+					key_count+=1;
+				}
+				
+			}
+			//printf("keycount %d\n", key_count);
+			//SAVING KEYS
+			lFiles[i].keywords = (char **)malloc(key_count+1);
+			key = strtok(value,"|");
+			for(j=0;key!=NULL;j++)
+			{
+				lFiles[i].keywords[j] = strdup(key);
+				key = strtok(NULL,"|");
+				//printf("keyword %s\t",lFiles[i].keywords[j]);
+			}
+			//printf("\n");
+			i++;
 		}
 	}
 	fclose(fp);
@@ -118,7 +230,8 @@ void doprocessing (int sock) {
 int create_server(int sport)
 {
 	struct sockaddr_in saddr,caddr;
-	int serversock,clientsock,retval,pid,clen;
+	int serversock,clientsock,retval,pid;
+	socklen_t clen;
 
 	//create a socket
 	serversock = socket(AF_INET,SOCK_STREAM,0);
@@ -182,25 +295,29 @@ int create_server(int sport)
 int main(void)
 {
 	struct g04_config* g04;
+	struct nodeinf seedInf[MAX_CONNECTIONS];
+	struct fileDB lFiles[MAX_FILES];
 	int pd1,pd2,status,n=2,pid;
 	g04 = (struct g04_config*)malloc(sizeof(struct g04_config));
 	parseConfig(g04);
-	printconfig(g04);
-	/*pd1 = fork();
+	parseSeedFile(seedInf,g04->seedTracker);
+	parsefileDB(lFiles,g04->localFiles);
+	pd1 = fork();
 	pd2 = fork();
 	if(pd1==0)
 	{
-		create_server(5007);	
+		create_server(g04->nPort);	
 	}
 	if(pd2==0)
 	{
-		create_server(5008);
+		create_server(g04->fPort);
 	}
 
 	while (n > 0) {
   		pid = wait(&status);
   		printf("Child with PID %ld exited with status 0x%x.\n", (long)pid, status);
  		 --n;  // TODO(pts): Remove pid from the pids array.
-				}*/
+				}
+	free(g04);
 	return 0;
 }
