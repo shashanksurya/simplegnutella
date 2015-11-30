@@ -12,6 +12,7 @@
 #include <netdb.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #define MAX_CONNECTIONS 100
 #define MAX_FILE_LENGTH 20
 #define MAX_LINE_LENGTH 100
@@ -54,13 +55,75 @@ struct fileDB
 struct g04_config* g04;
 struct nodeinf seedInf[MAX_CONNECTIONS];
 struct fileDB lFiles[MAX_FILES];
-int connected_peers=0;
+int connected_peers=0; 
+int is_seed_connected=0; //not connected
+int total_seeds = 0,present_seed=0;
 
-void create_client()
+
+//Connects to seed file and returns if success/fail
+int connect_to_seed(char *IP,int port)
 {
+	int cl_fd,num_bytes;
+	struct sockaddr_in cl_addr;
+	struct hostent *client;
+	char buffer[256]; 
+	strcpy(buffer,"GNUTELLA CONNECT/0.4\r\n");
+
+	if((cl_fd = socket(AF_INET, SOCK_STREAM, 0))<0)
+	{
+		perror("Socket open failed in connecting to seed!");
+      	return 0;
+	}
+	
+	if((client = gethostbyname(IP))==NULL)
+	{
+		perror("Host not found");
+      	return 0;
+	}
+	bzero((char *) &cl_addr, sizeof(cl_addr));
+   	cl_addr.sin_family = AF_INET;
+   	bcopy((char *)client->h_addr, (char *)&cl_addr.sin_addr.s_addr, client->h_length);
+   	cl_addr.sin_port = htons(port);
+   
+    if (connect(cl_fd, (struct sockaddr*)&cl_addr, sizeof(cl_addr)) < 0) 
+    {
+       perror("ERROR connecting to seed!");
+       return 0;
+    }
+    if((num_bytes = write(cl_fd, buffer, strlen(buffer)))<0)
+    {
+    	perror("Socket seed write failed!");
+    	return 0;
+    }
+    bzero(buffer,256);
+   	if((num_bytes = read(cl_fd, buffer, 255))<0)
+   	{
+      perror("ERROR reading from seed socket");
+      exit(1);
+   	}
+   	printf("%s\n",buffer);
+	return 1;
+}
+
+void *create_client()
+{
+	//0 FALSE, 1 TRUE
+	int no_seeds_found=0;
 	while(1)
 	{
+		if(connected_peers<g04->nop)
+		{
+			//Try to connect to a seed if not
+			if(present_seed<total_seeds&&is_seed_connected==0)
+			{
+				is_seed_connected = connect_to_seed(seedInf[present_seed].IP,seedInf[present_seed].port);
+			}
+			else
+			{
+				//Already connected, probe the seed(PINGS)
 
+			}
+		}
 	}
 
 }
@@ -158,6 +221,7 @@ void parseSeedFile(struct nodeinf* seedInf,char *filename)
 		}
 	}
 	//to mark the end of the file
+	total_seeds = i-1;
 	strcpy(seedInf[i].IP,"0.0.0.0");
 	seedInf[i].port = -1;
 	fclose(fp);
@@ -227,10 +291,11 @@ void printconfig(struct g04_config* g)
 	printf("%s\n",g->lfilepath);
 }
 
-void doprocessing (int sock) {
+void *doprocessing(void *tsock) {
    int n;
    char buffer[256];
    bzero(buffer,256);
+   int sock = *(int *)tsock;
    n = read(sock,buffer,255);
    
    if (n < 0) {
@@ -245,15 +310,19 @@ void doprocessing (int sock) {
       perror("ERROR writing to socket");
       exit(1);
    }
-   
+   close(sock);
+   free(tsock);
+   return 0;
 }
 
 
 //Start a tcp server listening on some port
-int create_server(int sport)
+void *create_server(void* sport)
 {
 	struct sockaddr_in saddr,caddr;
-	int serversock,clientsock,retval,pid;
+	int serversock,clientsock,retval;
+	int *newsock;
+	pthread_t tid;
 	socklen_t clen;
 
 	//create a socket
@@ -271,7 +340,7 @@ int create_server(int sport)
 	bzero((char *)&saddr, sizeof(saddr));
 	saddr.sin_family = AF_INET;
 	saddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-	saddr.sin_port = htons(sport);
+	saddr.sin_port = htons(*(int *)sport);
 
 	//bind
 	retval = bind(serversock, (struct sockaddr *) &saddr, sizeof(saddr));
@@ -294,57 +363,32 @@ int create_server(int sport)
 			exit(1);
 		}
 
-		pid = fork();
-
-		if(pid<0)
-		{
-			perror("Fork Error!");
-			exit(1);
-		}
-		if(pid==0)
-		{//client handler
-			close(serversock);
-			doprocessing(clientsock);
-			exit(0);
-		}
-		else
-		{
-			close(clientsock);
-		}
+		newsock = malloc(sizeof(int));
+    	*newsock = clientsock;
+    	pthread_create(&tid, NULL, doprocessing, newsock);
+    	pthread_detach(tid);
+		//close(clientsock);
 	}
 
 }
 
 int main(void)
 {
-	int pd1,pd2,pd3,status,n=2,pid;
+	char *stat1,*stat2,*stat3;
+	pthread_t tid1,tid2,tid3;
 	g04 = (struct g04_config*)malloc(sizeof(struct g04_config));
 	parseConfig(g04);
 	printconfig(g04);
 	parseSeedFile(seedInf,g04->seedTracker);
 	parsefileDB(lFiles,g04->localFiles);
-	pd1 = fork(); //for incoming requests to connect
-	pd2 = fork(); //for file transfers
-	pd3 = fork(); //for client process
-	if(pd1==0)
-	{
-		create_server(g04->nPort);	
-	}
-	//if 
-	if(pd2==0&&g04->isSeed == 0)
-	{
-		create_server(g04->fPort);
-	}
-	if(pd3==0)
-	{
-		create_client();
-	}
-
-	while (n > 0) {
-  		pid = wait(&status);
-  		printf("Child with PID %ld exited with status 0x%x.\n", (long)pid, status);
- 		 --n;  // TODO(pts): Remove pid from the pids array.
-				}
+	pthread_create(&tid1, NULL, create_server,(void *) &g04->nPort);
+	if(g04->isSeed==0)
+		pthread_create(&tid2, NULL, create_server,(void *) &g04->fPort);	
+	pthread_create(&tid3, NULL, create_client,NULL);
+	pthread_join(tid1,(void**)&stat1);
+	if(g04->isSeed==0)
+		pthread_join(tid2,(void**)&stat2);
+	pthread_join(tid3,(void**)&stat3);
 	free(g04);
 	return 0;
 }
