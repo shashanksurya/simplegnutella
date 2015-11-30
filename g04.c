@@ -17,6 +17,15 @@
 #define MAX_LINE_LENGTH 100
 #define MAX_FILES 200
 
+struct g04_header
+{
+	unsigned char messageid[17]; //16bytes
+	unsigned char proc_id; //1 byte
+	unsigned char ttl; //1byte
+	unsigned char hops; //1byte
+	unsigned char payload_length[5];//4 byte
+};
+
 struct g04_config
 {
 	int nPort;
@@ -41,6 +50,20 @@ struct fileDB
 	char *filename;
 };
 
+//GLOBAL VARIABLES
+struct g04_config* g04;
+struct nodeinf seedInf[MAX_CONNECTIONS];
+struct fileDB lFiles[MAX_FILES];
+int connected_peers=0;
+
+void create_client()
+{
+	while(1)
+	{
+
+	}
+
+}
 
 char *removespaces(char *c)
 {
@@ -294,23 +317,27 @@ int create_server(int sport)
 
 int main(void)
 {
-	struct g04_config* g04;
-	struct nodeinf seedInf[MAX_CONNECTIONS];
-	struct fileDB lFiles[MAX_FILES];
-	int pd1,pd2,status,n=2,pid;
+	int pd1,pd2,pd3,status,n=2,pid;
 	g04 = (struct g04_config*)malloc(sizeof(struct g04_config));
 	parseConfig(g04);
+	printconfig(g04);
 	parseSeedFile(seedInf,g04->seedTracker);
 	parsefileDB(lFiles,g04->localFiles);
-	pd1 = fork();
-	pd2 = fork();
+	pd1 = fork(); //for incoming requests to connect
+	pd2 = fork(); //for file transfers
+	pd3 = fork(); //for client process
 	if(pd1==0)
 	{
 		create_server(g04->nPort);	
 	}
-	if(pd2==0)
+	//if 
+	if(pd2==0&&g04->isSeed == 0)
 	{
 		create_server(g04->fPort);
+	}
+	if(pd3==0)
+	{
+		create_client();
 	}
 
 	while (n > 0) {
