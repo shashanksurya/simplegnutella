@@ -51,6 +51,13 @@ struct fileDB
 	char *filename;
 };
 
+struct server_thread_args
+{
+	int port;
+	char type;
+};
+
+
 //GLOBAL VARIABLES
 struct g04_config* g04;
 struct nodeinf seedInf[MAX_CONNECTIONS];
@@ -111,7 +118,8 @@ void *create_client()
 	int no_seeds_found=0;
 	while(1)
 	{
-		if(connected_peers<g04->nop)
+		//if the peer is not seed node
+		if((connected_peers<g04->nop)&&(g04->isSeed==0))
 		{
 			//Try to connect to a seed if not
 			if(present_seed<total_seeds&&is_seed_connected==0)
@@ -158,6 +166,7 @@ void parseConfig(struct g04_config* g)
 			if(token!=NULL)
 			{
 				value = strtok(NULL,split);
+				value = removespaces(value);
 			}
 			if(strcmp(token,"neighbourPort")==0)
 				g->nPort = atoi(value);
@@ -171,9 +180,9 @@ void parseConfig(struct g04_config* g)
 				strcpy(g->seedTracker,removespaces(value));
 			else if(strcmp(token,"isSeedNode")==0)
 			{
-				if(strcmp(value,"yes")==0)
+				if(strstr(value,"yes"))
 					g->isSeed = 1;
-				else if(strcmp(value,"no")==0)
+				else if(strcmp(value,"no"))
 					g->isSeed = 0;
 				else
 					g->isSeed = 0;
@@ -291,11 +300,41 @@ void printconfig(struct g04_config* g)
 	printf("%s\n",g->lfilepath);
 }
 
-void *doprocessing(void *tsock) {
+//response handler for neighbour connects
+void *respond_neighbour(void *tsock) {
    int n;
    char buffer[256];
-   bzero(buffer,256);
+   char sendmsg[] = "GNUTELLA OK\r\n";
    int sock = *(int *)tsock;
+   bzero(buffer,256);
+   n = read(sock,buffer,255);
+   if (n < 0) {
+      perror("Socket Read Failed!");
+      close(sock);
+      return 0;
+   }
+   if((strcmp(buffer,"GNUTELLA CONNECT/0.4\r\n"))==0&&(connected_peers<g04->nop))
+   	{
+   		n = write(sock,sendmsg,strlen(sendmsg));
+   	   	if (n < 0) {
+   	      perror("ERROR writing to socket");
+   	      exit(1);
+   	   }
+   	}
+   	//close if you have enough peers
+   	else
+   		close(sock);
+   free(tsock);
+   return 0;
+}
+
+//response handler for file requests
+void *respond_files(void *tsock) {
+   int n;
+   char buffer[256];
+   char message[] = "GNUTELLA OK\r\n";
+   int sock = *(int *)tsock;
+   bzero(buffer,256);
    n = read(sock,buffer,255);
    
    if (n < 0) {
@@ -304,7 +343,7 @@ void *doprocessing(void *tsock) {
    }
    
    printf("Here is the message: %s\n",buffer);
-   n = write(sock,"I got your message",18);
+   n = write(sock,message,strlen(message));
    
    if (n < 0) {
       perror("ERROR writing to socket");
@@ -315,11 +354,11 @@ void *doprocessing(void *tsock) {
    return 0;
 }
 
-
 //Start a tcp server listening on some port
-void *create_server(void* sport)
+void *create_server(void* s_args)
 {
 	struct sockaddr_in saddr,caddr;
+	struct server_thread_args *args = (struct server_thread_args *)s_args;
 	int serversock,clientsock,retval;
 	int *newsock;
 	pthread_t tid;
@@ -340,7 +379,7 @@ void *create_server(void* sport)
 	bzero((char *)&saddr, sizeof(saddr));
 	saddr.sin_family = AF_INET;
 	saddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-	saddr.sin_port = htons(*(int *)sport);
+	saddr.sin_port = htons(args->port);
 
 	//bind
 	retval = bind(serversock, (struct sockaddr *) &saddr, sizeof(saddr));
@@ -365,7 +404,10 @@ void *create_server(void* sport)
 
 		newsock = malloc(sizeof(int));
     	*newsock = clientsock;
-    	pthread_create(&tid, NULL, doprocessing, newsock);
+    	if(args->type == 'n')
+    		pthread_create(&tid, NULL, respond_neighbour, newsock);
+    	else if(args->type == 'f')
+    		pthread_create(&tid, NULL, respond_files, newsock);
     	pthread_detach(tid);
 		//close(clientsock);
 	}
@@ -374,16 +416,21 @@ void *create_server(void* sport)
 
 int main(void)
 {
-	char *stat1,*stat2,*stat3;
+	struct server_thread_args npargs,fpargs;
 	pthread_t tid1,tid2,tid3;
+	char *stat1,*stat2,*stat3;
 	g04 = (struct g04_config*)malloc(sizeof(struct g04_config));
 	parseConfig(g04);
 	printconfig(g04);
 	parseSeedFile(seedInf,g04->seedTracker);
 	parsefileDB(lFiles,g04->localFiles);
-	pthread_create(&tid1, NULL, create_server,(void *) &g04->nPort);
+	npargs.port = g04->nPort;
+	npargs.type = 'n';
+	fpargs.port = g04->fPort;
+	fpargs.type = 'f';	
+	pthread_create(&tid1, NULL, create_server,(void *) &npargs);
 	if(g04->isSeed==0)
-		pthread_create(&tid2, NULL, create_server,(void *) &g04->fPort);	
+		pthread_create(&tid2, NULL, create_server,(void *) &fpargs);	
 	pthread_create(&tid3, NULL, create_client,NULL);
 	pthread_join(tid1,(void**)&stat1);
 	if(g04->isSeed==0)
