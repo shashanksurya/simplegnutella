@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <signal.h>
 #define MAX_CONNECTIONS 100
 #define MAX_FILE_LENGTH 20
 #define MAX_LINE_LENGTH 100
@@ -79,9 +80,10 @@ int connect_to_seed(char *IP,int port)
 	if((cl_fd = socket(AF_INET, SOCK_STREAM, 0))<0)
 	{
 		perror("Socket open failed in connecting to seed!");
+		close(cl_fd);
       	return 0;
 	}
-	
+	signal(SIGPIPE, SIG_IGN);
 	if((client = gethostbyname(IP))==NULL)
 	{
 		perror("Host not found");
@@ -94,7 +96,8 @@ int connect_to_seed(char *IP,int port)
    
     if (connect(cl_fd, (struct sockaddr*)&cl_addr, sizeof(cl_addr)) < 0) 
     {
-       perror("ERROR connecting to seed!");
+       //perror("ERROR connecting to seed!");
+       close(cl_fd);
        return 0;
     }
     if((num_bytes = write(cl_fd, buffer, strlen(buffer)))<0)
@@ -105,10 +108,11 @@ int connect_to_seed(char *IP,int port)
     bzero(buffer,256);
    	if((num_bytes = read(cl_fd, buffer, 255))<0)
    	{
-      perror("ERROR reading from seed socket");
+      perror("ERROR reading from seed socket2");
       exit(1);
    	}
    	printf("%s\n",buffer);
+   	//fflush(cl_fd);
 	return 1;
 }
 
