@@ -14,26 +14,19 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdint.h>
 #define MAX_CONNECTIONS 100
 #define MAX_FILE_LENGTH 20
 #define MAX_LINE_LENGTH 100
 #define MAX_FILES 200
 
-struct g04_header
-{
-	unsigned char messageid[17]; //16bytes
-	unsigned char proc_id; //1 byte
-	unsigned char ttl; //1byte
-	unsigned char hops; //1byte
-	unsigned char payload_length[5];//4 byte
-};
 
 struct g04_config
 {
 	int nPort;
 	int fPort;
 	int nop;
-	int ttl;
+	char ttl[3];
 	char seedTracker[MAX_FILE_LENGTH];
 	int isSeed; //0 or 1
 	char localFiles[MAX_FILE_LENGTH];
@@ -65,80 +58,9 @@ struct nodeinf seedInf[MAX_CONNECTIONS];
 struct fileDB lFiles[MAX_FILES];
 int connected_peers=0; 
 int is_seed_connected=0; //not connected
-int total_seeds = 0,present_seed=0;
-
-
-//Connects to seed file and returns if success/fail
-int connect_to_seed(char *IP,int port)
-{
-	int cl_fd,num_bytes;
-	struct sockaddr_in cl_addr;
-	struct hostent *client;
-	char buffer[256]; 
-	strcpy(buffer,"GNUTELLA CONNECT/0.4\r\n");
-
-	if((cl_fd = socket(AF_INET, SOCK_STREAM, 0))<0)
-	{
-		perror("Socket open failed in connecting to seed!");
-		close(cl_fd);
-      	return 0;
-	}
-	signal(SIGPIPE, SIG_IGN);
-	if((client = gethostbyname(IP))==NULL)
-	{
-		perror("Host not found");
-      	return 0;
-	}
-	bzero((char *) &cl_addr, sizeof(cl_addr));
-   	cl_addr.sin_family = AF_INET;
-   	bcopy((char *)client->h_addr, (char *)&cl_addr.sin_addr.s_addr, client->h_length);
-   	cl_addr.sin_port = htons(port);
-   
-    if (connect(cl_fd, (struct sockaddr*)&cl_addr, sizeof(cl_addr)) < 0) 
-    {
-       //perror("ERROR connecting to seed!");
-       close(cl_fd);
-       return 0;
-    }
-    if((num_bytes = write(cl_fd, buffer, strlen(buffer)))<0)
-    {
-    	perror("Socket seed write failed!");
-    	return 0;
-    }
-    bzero(buffer,256);
-   	if((num_bytes = read(cl_fd, buffer, 255))<0)
-   	{
-      perror("ERROR reading from seed socket2");
-      exit(1);
-   	}
-   	printf("%s\n",buffer);
-   	//fflush(cl_fd);
-	return 1;
-}
-
-void *create_client()
-{
-	//0 FALSE, 1 TRUE
-	int no_seeds_found=0;
-	while(1)
-	{
-		//if the peer is not seed node
-		if((connected_peers<g04->nop)&&(g04->isSeed==0))
-		{
-			//Try to connect to a seed if not
-			if(present_seed<total_seeds&&is_seed_connected==0)
-			{
-				is_seed_connected = connect_to_seed(seedInf[present_seed].IP,seedInf[present_seed].port);
-			}
-			else
-			{
-				//Already connected, probe the seed(PINGS)
-
-			}
-		}
-	}
-
-}
+int total_seeds = 0,present_seed=0,nindex;
+int nsocks[MAX_CONNECTIONS];
+int seedsocks[MAX_CONNECTIONS];
 
 char *removespaces(char *c)
 {
@@ -179,7 +101,7 @@ void parseConfig(struct g04_config* g)
 			else if(strcmp(token,"NumberOfPeers")==0)
 				g->nop = atoi(value);
 			else if(strcmp(token,"TTL")==0)
-				g->ttl = atoi(value);
+				strcpy(g->ttl,value);
 			else if(strcmp(token,"seedNodes")==0)
 				strcpy(g->seedTracker,removespaces(value));
 			else if(strcmp(token,"isSeedNode")==0)
@@ -234,7 +156,8 @@ void parseSeedFile(struct nodeinf* seedInf,char *filename)
 		}
 	}
 	//to mark the end of the file
-	total_seeds = i-1;
+	total_seeds = i;
+	printf("Total seeds %d\n",total_seeds);
 	strcpy(seedInf[i].IP,"0.0.0.0");
 	seedInf[i].port = -1;
 	fclose(fp);
@@ -297,15 +220,149 @@ void printconfig(struct g04_config* g)
 	printf("%d\n",g->nPort);
 	printf("%d\n",g->fPort);
 	printf("%d\n",g->nop);
-	printf("%d\n",g->ttl);
+	printf("%s\n",g->ttl);
 	printf("%s\n",g->seedTracker);
 	printf("%d\n",g->isSeed);
 	printf("%s\n",g->localFiles);
 	printf("%s\n",g->lfilepath);
 }
 
+//Return 16 byte random number
+char *randgen()
+{
+	char *r = (char *)malloc(sizeof(char)*17);
+	int ii=0;
+	srand(time(NULL));
+	for(ii=0;ii<16;ii++)
+	{
+		r[ii] = rand()%255;
+
+	}
+	r[17] = '\0';
+	return r;
+}
+
+//Connects to seed file and returns if success/fail
+int connect_to_seed(char *IP,int port)
+{
+	int cl_fd,num_bytes;
+	struct sockaddr_in cl_addr;
+	struct hostent *client;
+	char buffer[256]; 
+	strcpy(buffer,"GNUTELLA CONNECT/0.4\r\n");
+
+	if((cl_fd = socket(AF_INET, SOCK_STREAM, 0))<0)
+	{
+		perror("Socket open failed in connecting to seed!");
+		close(cl_fd);
+      	return 0;
+	}
+	signal(SIGPIPE, SIG_IGN);
+	if((client = gethostbyname(IP))==NULL)
+	{
+		perror("Host not found");
+      	return 0;
+	}
+	bzero((char *) &cl_addr, sizeof(cl_addr));
+   	cl_addr.sin_family = AF_INET;
+   	bcopy((char *)client->h_addr, (char *)&cl_addr.sin_addr.s_addr, client->h_length);
+   	cl_addr.sin_port = htons(port);
+   
+    if (connect(cl_fd, (struct sockaddr*)&cl_addr, sizeof(cl_addr)) < 0) 
+    {
+       //perror("ERROR connecting to seed!");
+       close(cl_fd);
+       return 0;
+    }
+    if((num_bytes = write(cl_fd, buffer, strlen(buffer)))<0)
+    {
+    	perror("Socket seed write failed!");
+    	return 0;
+    }
+    bzero(buffer,256);
+   	if((num_bytes = read(cl_fd, buffer, 255))<0)
+   	{
+      perror("ERROR reading from seed socket2");
+      exit(1);
+   	}
+   	printf("%s sockfd: %d\n",buffer,cl_fd);
+   	//fflush(cl_fd);
+	return cl_fd;
+}
+
+void send_ping_to_seed(int sindex)
+{
+	char msg[80];
+	char *dt = malloc(2);
+	int num_bytes;
+	strcpy(dt,"#");
+	//struct g04_header ping_h;
+	strcpy(msg,randgen());
+	strcat(msg,dt);
+	strcat(msg,"0");
+	strcat(msg,dt);
+	strcat(msg,g04->ttl);
+	strcat(msg,dt);
+	strcat(msg,"0");
+	strcat(msg,dt);
+	strcat(msg,"00000");
+	printf("%s %d\n",msg,strlen(msg));	
+	free(dt);
+	if((num_bytes = write(sindex, msg, strlen(msg)))<0)
+    {
+    	perror("Socket seed write failed!");
+    	return 0;
+    }
+}
+
+void *create_client()
+{
+	//0 FALSE, 1 TRUE
+	int no_seeds_found=0;
+	int sockno=-1;
+	int tempflag = 0;
+	while(1)
+	{
+		//if the peer is not seed node and has less neighbours
+		if((connected_peers<g04->nop)&&(g04->isSeed==0))
+		{
+			//Try to connect to a seed first
+			if(is_seed_connected==0)
+			{
+				if((sockno = connect_to_seed(seedInf[present_seed].IP,seedInf[present_seed].port))!=0)
+				{//seed connection successful
+					is_seed_connected = 1;
+					seedsocks[present_seed] = sockno;
+					printf("Sock no. recieved %d\n",seedsocks[present_seed]);
+				}
+				else
+				{//try next seed
+					if(present_seed<total_seeds)
+						present_seed++;
+					else
+						present_seed = 0;
+				}
+			}
+			else
+			{
+				/*Seed connection established, probe the seed(PINGS)
+				1. If no neighbours found, try next seed node*/
+				if(tempflag == 0)
+					{	sleep(1);
+						printf("Sending ping on %d\n",seedsocks[present_seed]);
+						send_ping_to_seed(seedsocks[present_seed]);
+						//tempflag=1;
+					}
+
+			}
+		}
+	}
+
+}
+
 //response handler for neighbour connects
-void *respond_neighbour(void *tsock) {
+void *respond_neighbour(void *tsock) 
+{
    int n;
    char buffer[256];
    char sendmsg[] = "GNUTELLA OK\r\n";
@@ -317,23 +374,39 @@ void *respond_neighbour(void *tsock) {
       close(sock);
       return 0;
    }
-   if((strcmp(buffer,"GNUTELLA CONNECT/0.4\r\n"))==0&&(connected_peers<g04->nop))
+   /*accept neighbour based on following rules
+   	1. If you are not seed and you dont have enough friends
+   	2. If you are not seed and the message is gibberish(not connect)
+   	3. If you are seed! You are the real mvp!
+   */
+
+   	printf("recieved%s\n",buffer);
+   if(((strcmp(buffer,"GNUTELLA CONNECT/0.4\r\n"))==0&&(connected_peers<g04->nop))||g04->isSeed==1)
    	{
    		n = write(sock,sendmsg,strlen(sendmsg));
    	   	if (n < 0) {
    	      perror("ERROR writing to socket");
    	      exit(1);
    	   }
+   	   else
+   	   {//connect successful
+   	   	 nsocks[nindex] = sock;
+   	   	 nindex++;
+   	   }
    	}
    	//close if you have enough peers
    	else
-   		close(sock);
-   free(tsock);
+   	{
+   			printf("%s\n",buffer);
+   			//close(sock);
+   			//free(tsock);
+   	}
    return 0;
 }
 
 //response handler for file requests
-void *respond_files(void *tsock) {
+void *respond_files(void *tsock) 
+{
    int n;
    char buffer[256];
    char message[] = "GNUTELLA OK\r\n";
@@ -366,6 +439,7 @@ void *create_server(void* s_args)
 	int serversock,clientsock,retval;
 	int *newsock;
 	pthread_t tid;
+	char *child;
 	socklen_t clen;
 
 	//create a socket
@@ -412,7 +486,7 @@ void *create_server(void* s_args)
     		pthread_create(&tid, NULL, respond_neighbour, newsock);
     	else if(args->type == 'f')
     		pthread_create(&tid, NULL, respond_files, newsock);
-    	pthread_detach(tid);
+    	pthread_join(tid,(void**)&child);
 		//close(clientsock);
 	}
 
