@@ -431,6 +431,22 @@ void *respond_files(void *tsock)
    return 0;
 }
 
+void read_from_activesockets()
+{
+	int i,n;
+	char buffer[256];
+	for(i=0;i<nindex;i++)
+	{
+		n = read(nsocks[i],buffer,255);
+		if (n < 0) {
+      perror("ERROR reading from socket");
+      exit(1);
+   }
+   
+   printf("NEw message from client%s\n",buffer);
+	}
+}
+
 //Start a tcp server listening on some port
 void *create_server(void* s_args)
 {
@@ -487,6 +503,9 @@ void *create_server(void* s_args)
     	else if(args->type == 'f')
     		pthread_create(&tid, NULL, respond_files, newsock);
     	pthread_join(tid,(void**)&child);
+
+    read_from_activesockets();
+    sleep(1);
 		//close(clientsock);
 	}
 
